@@ -44,6 +44,12 @@ jobs:
           chmod +x gradlew
           ./gradlew tools:pack --stacktrace
 
+      - name: 列出 Arc backend-robovm 的所有任务（找下载 framework 的任务名）
+        run: |
+          cd Mindustry
+          chmod +x gradlew
+          ./gradlew :Arc:backends:backend-robovm:tasks --all --stacktrace 2>&1 | grep -i -E "ios|angle|fetch|extract|download|native" || true
+
       - name: 编译 IPA
         run: |
           cd Mindustry
