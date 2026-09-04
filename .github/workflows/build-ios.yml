@@ -127,11 +127,13 @@ jobs:
       - name: Build Unsigned IPA
         run: |
           cd Mindustry
+          chmod +x ./gradlew
+          
+          # 【新增】强制将完整素材同步给 iOS 打包目录，打破原作者的本地 symlink 坑！
+          echo "Syncing game assets to iOS directory..."
+          rm -rf ios/assets
+          cp -a core/assets ios/assets
+          
+          echo "Building the final IPA..."
           # 直接调用 RoboVM 编译 iOS 版本，并强制跳过签名检测
           ./gradlew :ios:createIPA -Probovm.iosSkipSigning=true --no-daemon
-
-      - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Mindustry-iOS-${{ inputs.mindustry_ref }}-Unsigned
-          path: Mindustry/ios/build/robovm/*.ipa
