@@ -1,0 +1,111 @@
+name: Build Mindustry iOS (Unsigned)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mindustry_ref:
+        description: 'Mindustry 版本 (分支名/Tag/Commit，例如 master, v146)'
+        required: true
+        default: 'master'
+        type: string
+      arc_ref:
+        description: 'Arc 引擎版本 (请与游戏版本匹配，例如 master, v146)'
+        required: true
+        default: 'master'
+        type: string
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Mindustry
+        uses: actions/checkout@v4
+        with:
+          path: Mindustry
+          submodules: 'recursive'
+          ref: ${{ inputs.mindustry_ref }}
+
+      - name: Checkout Arc Engine
+        uses: actions/checkout@v4
+        with:
+          repository: Anuken/Arc
+          path: Arc
+          submodules: 'recursive'
+          ref: ${{ inputs.arc_ref }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Fetch MetalANGLEKit
+        run: |
+          TARGET_DIR="Arc/backends/backend-robovm/res/META-INF/robovm/ios/libs"
+          mkdir -p $TARGET_DIR
+          echo "Downloading MetalANGLEKit..."
+          curl -L -o metalanglekit.zip "https://github.com/libgdx/MetalANGLEKit/releases/download/v1.2.1/metalanglekit.zip"
+          unzip -o metalanglekit.zip -d $TARGET_DIR
+          rm metalanglekit.zip
+
+      - name: Compile and Inject Arc iOS Natives
+        run: |
+          cd Arc
+          chmod +x ./gradlew
+          
+          echo "Generating C++ bindings..."
+          ./gradlew :arc-core:jnigen
+          
+          echo "Compiling iOS natives using Xcode..."
+          ./gradlew :arc-core:jnigenBuildAllIOS
+          
+          echo "Injecting compiled natives to RoboVM..."
+          TARGET_DIR="backends/backend-robovm/res/META-INF/robovm/ios/libs"
+          mkdir -p $TARGET_DIR
+          
+          find . -type d -name "arc.xcframework" -exec cp -R {} $TARGET_DIR/ \; || true
+          find . -type f -name "*.a" -exec cp {} $TARGET_DIR/ \; || true
+          
+          ARC_STATIC=$(find $TARGET_DIR -maxdepth 1 -name "libarc*.a" | grep -v "freetype" | head -n 1)
+          
+          if [ -n "$ARC_STATIC" ] && [ ! -d "$TARGET_DIR/arc.xcframework" ] && [ ! -d "$TARGET_DIR/arc.framework" ]; then
+            echo "Wrapping $ARC_STATIC into pseudo framework..."
+            mkdir -p $TARGET_DIR/arc.framework
+            cp $ARC_STATIC $TARGET_DIR/arc.framework/arc
+          fi
+          
+          echo "=== 检查注入产物 ==="
+          ls -la $TARGET_DIR
+
+      # 6. 【新增补丁】专门为打包旧版本准备的贴图生成任务（带重试机制）
+      - name: Generate Game Assets (For Old Versions)
+        run: |
+          cd Mindustry
+          chmod +x ./gradlew
+          
+          echo "Starting asset packing..."
+          # 设置最大重试 3 次，防止生成器多线程 I/O 竞争导致随机报错
+          for i in 1 2 3; do
+            echo "Attempt $i to pack assets..."
+            # 加上 --no-daemon 避免守护进程缓存问题
+            ./gradlew pack --no-daemon && echo "Assets packed successfully!" && break || echo "Pack attempt $i failed, retrying..."
+            
+            if [ $i -eq 3 ]; then
+              echo "Failed to pack assets after 3 attempts!"
+              exit 1
+            fi
+          done
+
+      # 7. 开始编译 IPA
+      - name: Build Unsigned IPA
+        run: |
+          cd Mindustry
+          # 直接调用 RoboVM 编译 iOS 版本，并强制跳过签名检测
+          ./gradlew :ios:createIPA -Probovm.iosSkipSigning=true --no-daemon
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mindustry-iOS-${{ inputs.mindustry_ref }}-Unsigned
+          path: Mindustry/ios/build/robovm/*.ipa
