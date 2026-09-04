@@ -1,60 +1,80 @@
-name: iOS IPA Build
+name: Build Mindustry iOS (Unsigned)
 
 on:
   workflow_dispatch:
-    inputs:
-      branch_or_tag:
-        description: 'Branch or tag to build (e.g., master, v7.0, feature/branch)'
-        required: true
-        default: 'master'
-      build_number:
-        description: 'Build number (optional, auto-incremented if not provided)'
-        required: false
-        default: ''
 
 jobs:
-  build-ios:
+  build:
     runs-on: macos-latest
-    
+
     steps:
-      - name: Checkout code
+      - name: Checkout Mindustry
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.branch_or_tag }}
-          fetch-depth: 0
+          path: Mindustry
+          submodules: 'recursive'
 
-      - name: Set up Java
+      - name: Checkout Arc Engine
+        uses: actions/checkout@v4
+        with:
+          repository: Anuken/Arc
+          path: Arc
+          submodules: 'recursive'
+
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      - name: Install dependencies
+      - name: Fetch MetalANGLEKit
         run: |
-          brew install gradle
-          which gradle
-          gradle --version
+          TARGET_DIR="Arc/backends/backend-robovm/res/META-INF/robovm/ios/libs"
+          mkdir -p $TARGET_DIR
+          echo "Downloading MetalANGLEKit..."
+          curl -L -o metalanglekit.zip "https://github.com/libgdx/MetalANGLEKit/releases/download/v1.2.1/metalanglekit.zip"
+          unzip -o metalanglekit.zip -d $TARGET_DIR
+          rm metalanglekit.zip
 
-      - name: Build iOS IPA
+      - name: Compile and Inject Arc iOS Natives
         run: |
-          cd ${{ github.workspace }}
-          ./gradlew -p ios createIPA \
-            -Dbuildversion="${{ steps.build_num.outputs.build_number }}" \
-            -DiosSkipSigning=true
-        env:
-          GRADLE_OPTS: "-Xmx4g"
-          JAVA_OPTS: "-Xmx4g"
+          cd Arc
+          chmod +x ./gradlew
+          
+          echo "Generating C++ bindings..."
+          ./gradlew :arc-core:jnigen
+          
+          echo "Compiling iOS natives using Xcode..."
+          ./gradlew :arc-core:jnigenBuildAllIOS
+          
+          echo "Injecting compiled natives to RoboVM..."
+          TARGET_DIR="backends/backend-robovm/res/META-INF/robovm/ios/libs"
+          mkdir -p $TARGET_DIR
+          
+          find . -type d -name "arc.xcframework" -exec cp -R {} $TARGET_DIR/ \; || true
+          
+          find . -type f -name "*.a" -exec cp {} $TARGET_DIR/ \; || true
+          
+          ARC_STATIC=$(find $TARGET_DIR -maxdepth 1 -name "libarc*.a" | grep -v "freetype" | head -n 1)
+          
+          if [ -n "$ARC_STATIC" ] && [ ! -d "$TARGET_DIR/arc.xcframework" ] && [ ! -d "$TARGET_DIR/arc.framework" ]; then
+            echo "Wrapping $ARC_STATIC into pseudo framework..."
+            mkdir -p $TARGET_DIR/arc.framework
+            cp $ARC_STATIC $TARGET_DIR/arc.framework/arc
+          fi
+          
+          echo "=== 检查注入产物 ==="
+          ls -la $TARGET_DIR
 
-      - name: Package and upload
+      - name: Build Unsigned IPA
         run: |
-          mkdir -p ios_build_output
-          cp ios/build/robovm/Mindustry.ipa ios_build_output/ || true
-          cd ios_build_output && sha256sum *.ipa > SHA256SUMS || true
+          cd Mindustry
+          chmod +x ./gradlew
+          
+          ./gradlew :ios:createIPA -Probovm.iosSkipSigning=true
 
-      - name: Upload IPA as artifact
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Mindustry-iOS-IPA
-          path: ios_build_output/
-          retention-days: 30
+          name: Mindustry-iOS-Unsigned
+          path: Mindustry/ios/build/robovm/*.ipa
