@@ -1,0 +1,71 @@
+name: Build Mindustry iOS IPA (unsigned, TrollStore)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '要编译的分支或 tag（如 master / v146 / v7-be）'
+        required: true
+        default: 'master'
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Mindustry
+        uses: actions/checkout@v4
+        with:
+          repository: Anuken/Mindustry
+          ref: ${{ github.event.inputs.ref }}
+          path: Mindustry
+
+      - name: Checkout Arc (依赖库)
+        uses: actions/checkout@v4
+        with:
+          repository: Anuken/Arc
+          ref: master
+          path: Arc
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: 强制跳过 Apple 签名（改成未签名构建）
+        run: |
+          cd Mindustry/ios
+          sed -i '' 's/iosSkipSigning = false/iosSkipSigning = true/' build.gradle
+          cat build.gradle | grep -A3 "robovm{"
+
+      - name: 打包精灵图（iOS 构建前必须）
+        run: |
+          cd Mindustry
+          chmod +x gradlew
+          ./gradlew tools:pack --stacktrace
+
+      - name: 编译 IPA
+        run: |
+          cd Mindustry
+          ./gradlew ios:copyNatives ios:copyAssets ios:createIPA --stacktrace
+
+      - name: 列出产物（调试用，方便确认实际路径）
+        run: find Mindustry/ios/build -iname "*.ipa" -o -iname "*.app"
+
+      - name: 用 ldid 补假签名
+        run: |
+          brew install ldid
+          IPA=$(find Mindustry/ios/build -iname "*.ipa" | head -n1)
+          mkdir -p work && cd work
+          unzip -q "$IPA" -d unzipped
+          APPDIR=$(find unzipped/Payload -maxdepth 1 -iname "*.app")
+          BIN=$(find "$APPDIR" -maxdepth 1 -type f -perm -111 | head -n1)
+          ldid -S "$BIN"
+          cd unzipped && zip -qr ../Mindustry-signed.ipa Payload
+          mv ../Mindustry-signed.ipa ../../Mindustry-${{ github.event.inputs.ref }}.ipa
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mindustry-${{ github.event.inputs.ref }}
+          path: Mindustry-${{ github.event.inputs.ref }}.ipa
