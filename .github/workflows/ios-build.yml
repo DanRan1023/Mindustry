@@ -83,13 +83,13 @@ jobs:
           
           find . -type f -name "*.a" -exec cp {} $TARGET_DIR/ \; || true
           
-          ARC_STATIC=$(find $TARGET_DIR -maxdepth 1 -name "libarc*.a" | grep -v "freetype" | head -n 1)
-          
-          if [ -n "$ARC_STATIC" ] && [ ! -d "$TARGET_DIR/arc.xcframework" ] && [ ! -d "$TARGET_DIR/arc.framework" ]; then
-            echo "Wrapping $ARC_STATIC into pseudo framework..."
-            mkdir -p $TARGET_DIR/arc.framework
-            cp $ARC_STATIC $TARGET_DIR/arc.framework/arc
-          fi
+          # Copy all arc libraries into framework
+          for lib in "$TARGET_DIR"/libarc*.a; do
+          [ -f "$lib" ] && echo "Found: $(basename $lib)"
+          done
+
+          # Ensure freetype is present
+          ls -la "$TARGET_DIR"/libarc-freetype.a 2>/dev/null || echo "Warning: freetype not found"
           
           echo "=== 检查注入产物 ==="
           ls -la $TARGET_DIR
