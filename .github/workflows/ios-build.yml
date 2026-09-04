@@ -79,8 +79,16 @@ jobs:
           TARGET_DIR="backends/backend-robovm/res/META-INF/robovm/ios/libs"
           mkdir -p $TARGET_DIR
           
+          # Copy from the jnigen build output directory
+          BUILD_OUTPUT_DIR="arc-core/build/natives"
+          if [ -d "$BUILD_OUTPUT_DIR" ]; then
+            echo "Copying native libraries from build output..."
+            find "$BUILD_OUTPUT_DIR" -type f -name "*.a" -exec cp {} $TARGET_DIR/ \;
+            find "$BUILD_OUTPUT_DIR" -type d -name "*.xcframework" -exec cp -R {} $TARGET_DIR/ \; || true
+          fi
+          
+          # Also copy xcframework if present elsewhere
           find . -type d -name "arc.xcframework" -exec cp -R {} $TARGET_DIR/ \; || true
-          find . -type f -name "*.a" -exec cp {} $TARGET_DIR/ \; || true
           
           echo "=== 检查所有复制的库文件 ==="
           ls -la $TARGET_DIR
@@ -88,6 +96,14 @@ jobs:
           echo "验证必要的库文件..."
           [ -f "$TARGET_DIR/libarc-freetype.a" ] && echo "✓ freetype found" || echo "✗ freetype missing"
           [ -f "$TARGET_DIR/libarc-core.a" ] && echo "✓ core found" || echo "✗ core missing"
+          
+          # Fail if core library is missing
+          if [ ! -f "$TARGET_DIR/libarc-core.a" ]; then
+            echo "ERROR: libarc-core.a not found!"
+            echo "Available files in $TARGET_DIR:"
+            ls -la $TARGET_DIR
+            exit 1
+          fi
 
       - name: Build Unsigned IPA
         run: |
