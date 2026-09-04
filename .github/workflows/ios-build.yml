@@ -83,13 +83,11 @@ jobs:
           
           find . -type f -name "*.a" -exec cp {} $TARGET_DIR/ \; || true
           
-          # Copy all arc libraries into framework
-          for lib in "$TARGET_DIR"/libarc*.a; do
-          [ -f "$lib" ] && echo "Found: $(basename $lib)"
-          done
-
-          # Ensure freetype is present
-          ls -la "$TARGET_DIR"/libarc-freetype.a 2>/dev/null || echo "Warning: freetype not found"
+          ARC_STATIC=$(find $TARGET_DIR -maxdepth 1 -name "libarc*.a" | grep -v "freetype" | head -n 1)
+          if [ ! -f "$TARGET_DIR/libarc-freetype.a" ]; then
+          echo "未找到 freetype 库，尝试从编译输出中查找..."
+          find . -name "libarc-freetype.a" -exec cp {} "$TARGET_DIR/" \;
+          fi
           
           echo "=== 检查注入产物 ==="
           ls -la $TARGET_DIR
