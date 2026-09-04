@@ -68,17 +68,13 @@ jobs:
           mkdir -p $TARGET_DIR
           
           # 处理主引擎 (arc-core)
-          XCFRAMEWORK=$(find . -type d -path "*/arc-core/*" -name "*.xcframework" | head -n 1)
-          if [ -z "$XCFRAMEWORK" ]; then
-            XCFRAMEWORK=$(find . -type d -name "arc.xcframework" | head -n 1)
-          fi
-          
+          XCFRAMEWORK=$(find . -type d -name "arc.xcframework" | head -n 1)
           if [ -n "$XCFRAMEWORK" ]; then
             echo "Found Core xcframework: $XCFRAMEWORK"
             cp -R "$XCFRAMEWORK" $TARGET_DIR/arc.xcframework
           else
             # 兼容老版本：找真机版 .a 并封装成 framework
-            ARC_A=$(find . -type f -path "*/arc-core/*" -name "*.a" | grep -v -i "simulator" | head -n 1)
+            ARC_A=$(find . -type f -name "libarc*.a" | grep -v "freetype" | grep -v -i "simulator" | head -n 1)
             if [ -n "$ARC_A" ]; then
               echo "Found Core static lib: $ARC_A"
               mkdir -p $TARGET_DIR/arc.framework
@@ -90,16 +86,19 @@ jobs:
           echo "Injecting Freetype to Mindustry ios/libs..."
           mkdir -p ../Mindustry/ios/libs
           
-          # 放宽搜索条件，抓取 Freetype 文件夹下生成的真机版静态库
-          FREETYPE_A=$(find . -type f -path "*/freetype/*" -name "*.a" | grep -v -i "simulator" | head -n 1)
+          # 终极放宽：全图搜索 libarc-freetype.a，剔除模拟器版本
+          FREETYPE_A=$(find . -type f -name "libarc-freetype.a" | grep -v -i "simulator" | head -n 1)
+          
+          # 兜底：如果上面的 grep 不小心过滤空了，直接拿第一个
+          if [ -z "$FREETYPE_A" ]; then
+            FREETYPE_A=$(find . -type f -name "libarc-freetype.a" | head -n 1)
+          fi
           
           if [ -n "$FREETYPE_A" ]; then
             echo "Found Freetype library at: $FREETYPE_A"
-            # 复制并强制重命名为游戏期待的名字
             cp "$FREETYPE_A" ../Mindustry/ios/libs/libarc-freetype.a
             echo "✅ Freetype library copied successfully!"
           else
-            # 如果依然找不到，打印出现有的库并阻断运行
             echo "❌ Freetype .a not found! Check directory contents:"
             find . -name "*.a"
             exit 1
