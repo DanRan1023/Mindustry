@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Branch or tag to checkout for Mindustry (e.g. main or v1.2.3). Leave empty to use the workflow run ref.'
+        description: 'Git ref (branch or tag) of the Mindustry repo to build, e.g. "main" or "v1.2.3". Leave empty to use the default workflow ref.'
         required: false
         default: ''
       arc_ref:
-        description: 'Optional branch or tag to checkout for Anuken/Arc. Leave empty to use its default branch.'
+        description: 'Optional Git ref (branch or tag) for the Anuken/Arc repo. Leave empty to use its default branch.'
         required: false
         default: ''
 
@@ -17,36 +17,37 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - name: Print resolved refs
-        run: |
-          echo "Mindustry ref: ${{ inputs.ref != '' ? inputs.ref : github.ref }}"
-          echo "Arc ref: ${{ inputs.arc_ref != '' ? inputs.arc_ref : '(default)'}}"
-
-      - name: Checkout Mindustry
+      - name: Checkout Mindustry (specific ref)
+        if: ${{ inputs.ref != '' }}
         uses: actions/checkout@v4
         with:
           path: Mindustry
           submodules: 'recursive'
-          ref: ${{ inputs.ref != '' ? inputs.ref : github.ref }}
+          ref: ${{ inputs.ref }}
 
-      - name: Checkout Arc Engine
+      - name: Checkout Mindustry (default)
+        if: ${{ inputs.ref == '' }}
+        uses: actions/checkout@v4
+        with:
+          path: Mindustry
+          submodules: 'recursive'
+
+      - name: Checkout Arc Engine (specific ref)
+        if: ${{ inputs.arc_ref != '' }}
         uses: actions/checkout@v4
         with:
           repository: Anuken/Arc
           path: Arc
           submodules: 'recursive'
+          ref: ${{ inputs.arc_ref }}
 
-      - name: Checkout Arc specified ref (optional)
-        if: ${{ inputs.arc_ref != '' }}
-        run: |
-          set -e
-          cd Arc
-          # Try to fetch the requested ref (handles tags and branches, shallow or not)
-          git fetch --prune origin "${{ inputs.arc_ref }}" || true
-          # If fetch didn't fetch (for some remotes), try fetching all and then checkout
-          git fetch --prune --unshallow origin "${{ inputs.arc_ref }}" || git fetch origin "${{ inputs.arc_ref }}" || true
-          git checkout --detach "${{ inputs.arc_ref }}" || git checkout -b "ci/${{ inputs.arc_ref }}" "${{ inputs.arc_ref }}" || true
-          git submodule update --init --recursive
+      - name: Checkout Arc Engine (default)
+        if: ${{ inputs.arc_ref == '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: Anuken/Arc
+          path: Arc
+          submodules: 'recursive'
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
