@@ -39,7 +39,7 @@ jobs:
       - name: Build iOS IPA
         run: |
           cd ${{ github.workspace }}
-          ./gradlew -p ios:ios createIPA \
+          ./gradlew -p ios createIPA \
             -Dbuildversion="${{ steps.build_num.outputs.build_number }}" \
             -DiosSkipSigning=true
         env:
