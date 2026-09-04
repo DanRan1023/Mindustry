@@ -73,22 +73,32 @@ jobs:
           ./gradlew :arc-core:jnigen
           
           echo "Compiling iOS natives using Xcode..."
-          ./gradlew :arc-core:jnigenBuildAllIOS
+          ./gradlew :arc-core:jnigenBuildAllIOS -i --stacktrace
           
-          echo "Injecting compiled natives to RoboVM..."
+          echo "Searching for generated native libraries..."
           TARGET_DIR="backends/backend-robovm/res/META-INF/robovm/ios/libs"
           mkdir -p $TARGET_DIR
+          
+          # Debug: Show build directory structure
+          echo "=== Arc Core Build Directory Structure ==="
+          find arc-core/build -type f \( -name "*.a" -o -name "*.xcframework" \) 2>/dev/null | head -20 || echo "No build artifacts found in arc-core/build"
           
           # Copy from the jnigen build output directory
           BUILD_OUTPUT_DIR="arc-core/build/natives"
           if [ -d "$BUILD_OUTPUT_DIR" ]; then
-            echo "Copying native libraries from build output..."
+            echo "Copying native libraries from $BUILD_OUTPUT_DIR..."
             find "$BUILD_OUTPUT_DIR" -type f -name "*.a" -exec cp {} $TARGET_DIR/ \;
             find "$BUILD_OUTPUT_DIR" -type d -name "*.xcframework" -exec cp -R {} $TARGET_DIR/ \; || true
+          else
+            echo "Build output directory not found: $BUILD_OUTPUT_DIR"
           fi
           
+          # Fallback: search entire build directory for .a files
+          echo "Searching for .a files in entire build directory..."
+          find . -type f -name "*.a" ! -path "*/.*" -exec cp {} $TARGET_DIR/ \; || true
+          
           # Also copy xcframework if present elsewhere
-          find . -type d -name "arc.xcframework" -exec cp -R {} $TARGET_DIR/ \; || true
+          find . -type d -name "*.xcframework" ! -path "*/.*" -exec cp -R {} $TARGET_DIR/ \; || true
           
           echo "=== 检查所有复制的库文件 ==="
           ls -la $TARGET_DIR
@@ -102,6 +112,9 @@ jobs:
             echo "ERROR: libarc-core.a not found!"
             echo "Available files in $TARGET_DIR:"
             ls -la $TARGET_DIR
+            echo ""
+            echo "Searching entire workspace for any .a files:"
+            find . -type f -name "*.a" ! -path "*/.*" 2>/dev/null || echo "No .a files found"
             exit 1
           fi
 
