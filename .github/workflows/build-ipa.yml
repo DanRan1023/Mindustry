@@ -10,8 +10,7 @@ on:
 
 jobs:
   build-ipa:
-    runs-on: macos-15   # 不要用 macos-latest（=macos-26，只有 Xcode 26.x）
-                         # 也不要用 macos-13（已下线，会一直排队/失败）
+    runs-on: macos-latest
     steps:
       - name: Checkout Mindustry
         uses: actions/checkout@v4
@@ -33,18 +32,13 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: 列出可用 Xcode 版本（调试用）
-        run: ls /Applications | grep Xcode
-
-      - name: 切换到较旧的 Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app
-
-      - name: 强制跳过 Apple 签名
+      - name: 强制跳过 Apple 签名（改成未签名构建）
         run: |
           cd Mindustry/ios
           sed -i '' 's/iosSkipSigning = false/iosSkipSigning = true/' build.gradle
+          cat build.gradle | grep -A3 "robovm{"
 
-      - name: 打包精灵图
+      - name: 打包精灵图（iOS 构建前必须）
         run: |
           cd Mindustry
           chmod +x gradlew
