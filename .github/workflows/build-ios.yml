@@ -59,7 +59,6 @@ jobs:
           ./gradlew :arc-core:jnigen
           ./gradlew :arc-core:jnigenBuildAllIOS
           
-          # 【新增】连带编译 Freetype 字体渲染引擎的 C++ 代码
           echo "Generating and compiling Freetype C++ bindings..."
           ./gradlew :extensions:freetype:jnigen
           ./gradlew :extensions:freetype:jnigenBuildAllIOS
@@ -68,38 +67,43 @@ jobs:
           TARGET_DIR="backends/backend-robovm/res/META-INF/robovm/ios/libs"
           mkdir -p $TARGET_DIR
           
-          # 在整个 Arc 源码树中全局搜索生成的 iOS 框架，并拷贝
-          find . -type d -name "arc.xcframework" -exec cp -R {} $TARGET_DIR/ \; || true
-          
-          # 在整个 Arc 源码树中全局搜索生成的静态库 .a，并全部拷贝
-          find . -type f -name "*.a" -exec cp {} $TARGET_DIR/ \; || true
-          
-          # 提取刚编译好的主引擎库
-          ARC_STATIC=$(find $TARGET_DIR -maxdepth 1 -name "libarc*.a" | grep -v "freetype" | head -n 1)
-          
-          # 制作伪装框架壳：将静态库强行伪装成 Linker 要求的 arc.framework
-          if [ -n "$ARC_STATIC" ] && [ ! -d "$TARGET_DIR/arc.xcframework" ] && [ ! -d "$TARGET_DIR/arc.framework" ]; then
-            echo "Wrapping $ARC_STATIC into pseudo framework..."
-            mkdir -p $TARGET_DIR/arc.framework
-            cp $ARC_STATIC $TARGET_DIR/arc.framework/arc
+          # 处理主引擎 (arc-core)
+          XCFRAMEWORK=$(find . -type d -path "*/arc-core/*" -name "*.xcframework" | head -n 1)
+          if [ -z "$XCFRAMEWORK" ]; then
+            XCFRAMEWORK=$(find . -type d -name "arc.xcframework" | head -n 1)
           fi
           
-          # 【新增】将新鲜出炉的 libarc-freetype.a 移交给 Mindustry 游戏主体的打包器
+          if [ -n "$XCFRAMEWORK" ]; then
+            echo "Found Core xcframework: $XCFRAMEWORK"
+            cp -R "$XCFRAMEWORK" $TARGET_DIR/arc.xcframework
+          else
+            # 兼容老版本：找真机版 .a 并封装成 framework
+            ARC_A=$(find . -type f -path "*/arc-core/*" -name "*.a" | grep -v -i "simulator" | head -n 1)
+            if [ -n "$ARC_A" ]; then
+              echo "Found Core static lib: $ARC_A"
+              mkdir -p $TARGET_DIR/arc.framework
+              cp "$ARC_A" $TARGET_DIR/arc.framework/arc
+            fi
+          fi
+          
+          # 处理字体引擎 (freetype)
           echo "Injecting Freetype to Mindustry ios/libs..."
           mkdir -p ../Mindustry/ios/libs
-          # 找到刚编译出的 Freetype 静态库（排除掉不能在真机运行的模拟器版 simulator）
-          FREETYPE_A=$(find extensions/freetype -type f -name "libarc-freetype.a" | grep -v "simulator" | head -n 1)
-          if [ -z "$FREETYPE_A" ]; then
-            FREETYPE_A=$(find extensions/freetype -type f -name "libarc-freetype.a" | head -n 1)
-          fi
-          if [ -n "$FREETYPE_A" ]; then
-            cp "$FREETYPE_A" ../Mindustry/ios/libs/libarc-freetype.a
-            echo "✅ Freetype library copied successfully."
-          fi
           
-          echo "=== 检查注入产物 ==="
-          ls -la $TARGET_DIR
-          ls -la ../Mindustry/ios/libs || true
+          # 放宽搜索条件，抓取 Freetype 文件夹下生成的真机版静态库
+          FREETYPE_A=$(find . -type f -path "*/freetype/*" -name "*.a" | grep -v -i "simulator" | head -n 1)
+          
+          if [ -n "$FREETYPE_A" ]; then
+            echo "Found Freetype library at: $FREETYPE_A"
+            # 复制并强制重命名为游戏期待的名字
+            cp "$FREETYPE_A" ../Mindustry/ios/libs/libarc-freetype.a
+            echo "✅ Freetype library copied successfully!"
+          else
+            # 如果依然找不到，打印出现有的库并阻断运行
+            echo "❌ Freetype .a not found! Check directory contents:"
+            find . -name "*.a"
+            exit 1
+          fi
 
       # 6. 【新增补丁】专门为打包旧版本准备的贴图生成任务（带重试机制）
       - name: Generate Game Assets (For Old Versions)
