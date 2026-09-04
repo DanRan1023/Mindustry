@@ -49,34 +49,57 @@ jobs:
           unzip -o metalanglekit.zip -d $TARGET_DIR
           rm metalanglekit.zip
 
+      # 5. 【终极绝杀】调用 Xcode 在云端现场编译底层 C++ 代码，生成 arc.xcframework！
       - name: Compile and Inject Arc iOS Natives
         run: |
           cd Arc
           chmod +x ./gradlew
           
-          echo "Generating C++ bindings..."
+          echo "Generating and compiling Core C++ bindings..."
           ./gradlew :arc-core:jnigen
-          
-          echo "Compiling iOS natives using Xcode..."
           ./gradlew :arc-core:jnigenBuildAllIOS
+          
+          # 【新增】连带编译 Freetype 字体渲染引擎的 C++ 代码
+          echo "Generating and compiling Freetype C++ bindings..."
+          ./gradlew :extensions:freetype:jnigen
+          ./gradlew :extensions:freetype:jnigenBuildAllIOS
           
           echo "Injecting compiled natives to RoboVM..."
           TARGET_DIR="backends/backend-robovm/res/META-INF/robovm/ios/libs"
           mkdir -p $TARGET_DIR
           
+          # 在整个 Arc 源码树中全局搜索生成的 iOS 框架，并拷贝
           find . -type d -name "arc.xcframework" -exec cp -R {} $TARGET_DIR/ \; || true
+          
+          # 在整个 Arc 源码树中全局搜索生成的静态库 .a，并全部拷贝
           find . -type f -name "*.a" -exec cp {} $TARGET_DIR/ \; || true
           
+          # 提取刚编译好的主引擎库
           ARC_STATIC=$(find $TARGET_DIR -maxdepth 1 -name "libarc*.a" | grep -v "freetype" | head -n 1)
           
+          # 制作伪装框架壳：将静态库强行伪装成 Linker 要求的 arc.framework
           if [ -n "$ARC_STATIC" ] && [ ! -d "$TARGET_DIR/arc.xcframework" ] && [ ! -d "$TARGET_DIR/arc.framework" ]; then
             echo "Wrapping $ARC_STATIC into pseudo framework..."
             mkdir -p $TARGET_DIR/arc.framework
             cp $ARC_STATIC $TARGET_DIR/arc.framework/arc
           fi
           
+          # 【新增】将新鲜出炉的 libarc-freetype.a 移交给 Mindustry 游戏主体的打包器
+          echo "Injecting Freetype to Mindustry ios/libs..."
+          mkdir -p ../Mindustry/ios/libs
+          # 找到刚编译出的 Freetype 静态库（排除掉不能在真机运行的模拟器版 simulator）
+          FREETYPE_A=$(find extensions/freetype -type f -name "libarc-freetype.a" | grep -v "simulator" | head -n 1)
+          if [ -z "$FREETYPE_A" ]; then
+            FREETYPE_A=$(find extensions/freetype -type f -name "libarc-freetype.a" | head -n 1)
+          fi
+          if [ -n "$FREETYPE_A" ]; then
+            cp "$FREETYPE_A" ../Mindustry/ios/libs/libarc-freetype.a
+            echo "✅ Freetype library copied successfully."
+          fi
+          
           echo "=== 检查注入产物 ==="
           ls -la $TARGET_DIR
+          ls -la ../Mindustry/ios/libs || true
 
       # 6. 【新增补丁】专门为打包旧版本准备的贴图生成任务（带重试机制）
       - name: Generate Game Assets (For Old Versions)
