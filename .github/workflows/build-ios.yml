@@ -42,12 +42,10 @@ jobs:
 
       - name: Fetch MetalANGLEKit
         run: |
-          TARGET_DIR="Arc/backends/backend-robovm/res/META-INF/robovm/ios/libs"
-          mkdir -p $TARGET_DIR
-          echo "Downloading MetalANGLEKit..."
-          curl -L -o metalanglekit.zip "https://github.com/libgdx/MetalANGLEKit/releases/download/v1.2.1/metalanglekit.zip"
-          unzip -o metalanglekit.zip -d $TARGET_DIR
-          rm metalanglekit.zip
+          cd Arc
+          chmod +x ./gradlew
+          # 唤醒沉睡的官方下载任务！
+          ./gradlew :backends:backend-robovm:extractMetalANGLEKit
 
       - name: Compile and Inject Arc iOS Natives
         run: |
