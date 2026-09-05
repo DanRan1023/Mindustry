@@ -113,22 +113,22 @@ jobs:
           ./gradlew :ios:createIPA -Probovm.iosSkipSigning=true --no-daemon
           
           echo "Hunting for generated files..."
-          # 全局搜索看 RoboVM 是否偷偷生成了 ipa
           EXISTING_IPA=$(find . -type f -name "*.ipa" | head -n 1)
           
           if [ -n "$EXISTING_IPA" ]; then
             echo "RoboVM actually generated an IPA at: $EXISTING_IPA"
+            # 【修复套娃】将生成的 ipa 移动到上一级的根目录，并重命名
+            mv "$EXISTING_IPA" ../Mindustry-iOS.ipa
           else
             echo "No IPA found. Hunting for .app to manually package..."
-            # 从根目录全图搜索 .app 文件夹
             APP_DIR=$(find . -type d -name "*.app" | head -n 1)
             
             if [ -n "$APP_DIR" ]; then
               echo "Found App: $APP_DIR"
               mkdir -p Payload
               cp -a "$APP_DIR" Payload/
-              # 使用 -q(静默) 和 -y(保留软链接，重要！)
-              zip -r -q -y Mindustry-Unsigned.ipa Payload
+              # 【修复套娃】将压缩好的 ipa 直接输出到上一级的根目录
+              zip -r -q -y ../Mindustry-iOS.ipa Payload
               echo "✅ IPA manually packaged successfully!"
             else
               echo "❌ .app folder not found! Build failed silently."
@@ -140,6 +140,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Mindustry-iOS-${{ inputs.mindustry_ref }}-Unsigned
-          # 【神挡杀神】：将原来写死的路径改成了 **/*.ipa，
-          # 意思是不管这个 .ipa 被生成在哪个隐秘的角落，直接用全图视野把它抓捕并上传！
-          path: '**/*.ipa'
+          # 【修复套娃】只上传根目录下的这一个文件，下载解压后就不会有烦人的嵌套文件夹了
+          path: Mindustry-iOS.ipa
