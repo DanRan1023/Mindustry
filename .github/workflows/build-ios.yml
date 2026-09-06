@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       mindustry_ref:
-        description: 'Mindustry 版本 (分支名/Tag/Commit，例如 master, v146)'
+        description: 'Mindustry 版本 (如 master, v159.7)'
         required: true
         default: 'master'
         type: string
       arc_ref:
-        description: 'Arc 引擎版本 (请与游戏版本匹配，例如 master, v146)'
+        description: 'Arc 引擎版本 (请与游戏版本匹配)'
         required: true
         default: 'master'
         type: string
@@ -22,14 +22,16 @@ jobs:
       - name: Checkout Mindustry
         uses: actions/checkout@v4
         with:
+          # 移除了 repository 指定，默认从你自己的 Fork 仓库拉取源码
           path: Mindustry
           submodules: 'recursive'
           ref: ${{ inputs.mindustry_ref }}
+          fetch-depth: 0
 
       - name: Checkout Arc Engine
         uses: actions/checkout@v4
         with:
-          repository: Anuken/Arc
+          repository: Anuken/Arc # 引擎依赖依然从官方抓取
           path: Arc
           submodules: 'recursive'
           ref: ${{ inputs.arc_ref }}
@@ -44,7 +46,6 @@ jobs:
         run: |
           cd Arc
           chmod +x ./gradlew
-          # 唤醒沉睡的官方下载任务！
           ./gradlew :backends:backend-robovm:extractMetalANGLEKit
 
       - name: Compile and Inject Arc iOS Natives
@@ -88,12 +89,63 @@ jobs:
             exit 1
           fi
 
+      - name: Determine Version Numbers & Inject Metadata
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd Mindustry
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          REF="${{ inputs.mindustry_ref }}"
+          
+          # 1. 动态抓取当前源码中规定的大版本号 (如 8)
+          MAJOR_VERSION=$(grep -oE "versionNumber = '[^']+'" build.gradle | cut -d"'" -f2)
+          if [ -z "$MAJOR_VERSION" ]; then MAJOR_VERSION="8"; fi
+          
+          # 2. 判断构建模式，并设置相应的 App 元数据
+          if [[ "$REF" =~ ^v[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "=== Official Release Mode ==="
+            BUILD_NUM="${REF#v}"
+            echo "BUILD_ARGS=-Pbuildversion=$BUILD_NUM -PversionType=official" >> $GITHUB_ENV
+            echo "PACK_NAME=v$BUILD_NUM" >> $GITHUB_ENV
+            
+            APP_NAME="Mindustry"
+            APP_ID="io.anuke.mindustry"
+          else
+            echo "=== Bleeding Edge Mode ==="
+            RUN_NUM=$(gh run list --repo Anuken/Mindustry --workflow push.yml --head $COMMIT_HASH --json runNumber -q ".[0].runNumber" 2>/dev/null || echo "")
+            if [ -z "$RUN_NUM" ] || [ "$RUN_NUM" == "null" ]; then
+              RUN_NUM=$(gh run list --repo Anuken/Mindustry --workflow push.yml --branch master --json runNumber -q ".[0].runNumber" 2>/dev/null || echo "")
+            fi
+            if [ -z "$RUN_NUM" ] || [ "$RUN_NUM" == "null" ]; then RUN_NUM=7765; fi
+            
+            BUILD_NUM=$((RUN_NUM + 20000))
+            echo "BUILD_ARGS=-Pbuildversion=$BUILD_NUM -PversionType=bleeding-edge -PshowCommitHash=true" >> $GITHUB_ENV
+            echo "PACK_NAME=BE-$BUILD_NUM" >> $GITHUB_ENV
+            
+            APP_NAME="Mindustry BE"
+            APP_ID="io.anuke.mindustry.be"
+          fi
+          
+          # 3. 终极接管：暴力复写 RoboVM 配置文件，强行注入精准对齐的版本号元数据！
+          cat <<EOF > ios/robovm.properties
+          app.id=$APP_ID
+          app.version=$MAJOR_VERSION.$BUILD_NUM
+          app.mainclass=mindustry.ios.IOSLauncher
+          app.executable=IOSLauncher
+          app.name=$APP_NAME
+          app.build=$BUILD_NUM
+          EOF
+          
+          echo "✅ Metadata successfully injected:"
+          cat ios/robovm.properties
+
       - name: Generate Game Assets (For Old Versions)
         run: |
           cd Mindustry
           chmod +x ./gradlew
           for i in 1 2 3; do
-            ./gradlew pack --no-daemon && echo "Assets packed!" && break || echo "Pack attempt $i failed, retrying..."
+            ./gradlew pack --no-daemon ${{ env.BUILD_ARGS }} && echo "Assets packed!" && break || echo "Pack attempt $i failed, retrying..."
             if [ $i -eq 3 ]; then
               echo "Failed to pack assets after 3 attempts!"
               exit 1
@@ -110,26 +162,19 @@ jobs:
           cp -a core/assets ios/assets
           
           echo "Building the iOS App..."
-          ./gradlew :ios:createIPA -Probovm.iosSkipSigning=true --no-daemon
+          ./gradlew :ios:createIPA -Probovm.iosSkipSigning=true --no-daemon ${{ env.BUILD_ARGS }}
           
           echo "Hunting for generated files..."
           EXISTING_IPA=$(find . -type f -name "*.ipa" | head -n 1)
           
           if [ -n "$EXISTING_IPA" ]; then
-            echo "RoboVM actually generated an IPA at: $EXISTING_IPA"
-            # 【修复套娃】将生成的 ipa 移动到上一级的根目录，并重命名
             mv "$EXISTING_IPA" ../Mindustry-iOS.ipa
           else
-            echo "No IPA found. Hunting for .app to manually package..."
             APP_DIR=$(find . -type d -name "*.app" | head -n 1)
-            
             if [ -n "$APP_DIR" ]; then
-              echo "Found App: $APP_DIR"
               mkdir -p Payload
               cp -a "$APP_DIR" Payload/
-              # 【修复套娃】将压缩好的 ipa 直接输出到上一级的根目录
               zip -r -q -y ../Mindustry-iOS.ipa Payload
-              echo "✅ IPA manually packaged successfully!"
             else
               echo "❌ .app folder not found! Build failed silently."
               exit 1
@@ -139,6 +184,5 @@ jobs:
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Mindustry-iOS-${{ inputs.mindustry_ref }}-Unsigned
-          # 【修复套娃】只上传根目录下的这一个文件，下载解压后就不会有烦人的嵌套文件夹了
+          name: Mindustry-iOS-${{ env.PACK_NAME }}-Unsigned
           path: Mindustry-iOS.ipa
